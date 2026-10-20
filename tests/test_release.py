@@ -45,9 +45,13 @@ class ComponentTests(unittest.TestCase):
                                str(ROOT / "tests" / f"test_{name}.c"),
                                "-o", str(output)]
                     subprocess.run(command, check=True)
-                    args = [str(output)]
-                    if name == "unlock_adapter" and ASSETS:
-                        args += ["-", str(ASSETS)]
-                    result = subprocess.run(args, capture_output=True, text=True)
-                    self.assertEqual(result.returncode, 0,
-                                     (result.stdout + result.stderr)[-4000:])
+                    devices = ("0x2204", "0x2203") if name == "unlock_adapter" else (None,)
+                    for device in devices:
+                        args = [str(output)]
+                        if device:
+                            args += [f"--device={device}"]
+                        if name == "unlock_adapter" and ASSETS:
+                            args += ["-", str(ASSETS)]
+                        result = subprocess.run(args, capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 0,
+                                         f"{device or name}: " + (result.stdout + result.stderr)[-4000:])

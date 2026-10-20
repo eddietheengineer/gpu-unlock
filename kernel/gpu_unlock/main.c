@@ -9,9 +9,15 @@
 
 static char *targets;
 module_param(targets, charp, 0444);
-MODULE_PARM_DESC(targets, "\"all\" or comma-separated PCI addresses of RTX 3090 cards to unlock");
+MODULE_PARM_DESC(targets, "\"all\" or comma-separated PCI addresses of RTX 3090/3090 Ti cards to unlock");
 
 #define RTX_3090 0x2204
+#define RTX_3090_TI 0x2203
+
+static bool supported(const struct pci_dev *pdev)
+{
+	return pdev->device == RTX_3090 || pdev->device == RTX_3090_TI;
+}
 
 static ASYNC_DOMAIN_EXCLUSIVE(unlock_domain);
 static struct gpu_unlock_610_shared shared;
@@ -53,14 +59,14 @@ static void report_unmatched(void)
 	for (entry = targets; *entry; entry = *end ? end + 1 : end) {
 		end = strchrnul(entry, ',');
 		pdev = NULL;
-		while ((pdev = pci_get_device(PCI_VENDOR_ID_NVIDIA, RTX_3090, pdev)))
-			if (strlen(pci_name(pdev)) == end - entry &&
+		while ((pdev = pci_get_device(PCI_VENDOR_ID_NVIDIA, PCI_ANY_ID, pdev)))
+			if (supported(pdev) && strlen(pci_name(pdev)) == end - entry &&
 			    !strncasecmp(pci_name(pdev), entry, end - entry))
 				break;
 		if (pdev)
 			pci_dev_put(pdev);
 		else
-			pr_err("gpu_unlock: no RTX 3090 at \"%.*s\"\n",
+			pr_err("gpu_unlock: no RTX 3090/3090 Ti at \"%.*s\"\n",
 			       (int)(end - entry), entry);
 	}
 }
@@ -77,7 +83,9 @@ static int __init gpu_unlock_init(void)
 	all = !strcmp(targets, "all");
 	if (!all)
 		report_unmatched();
-	while ((pdev = pci_get_device(PCI_VENDOR_ID_NVIDIA, RTX_3090, pdev))) {
+	while ((pdev = pci_get_device(PCI_VENDOR_ID_NVIDIA, PCI_ANY_ID, pdev))) {
+		if (!supported(pdev))
+			continue;
 		if (!all && !listed(pci_name(pdev)))
 			continue;
 		if (!shared.gsp) {
@@ -103,5 +111,5 @@ static void __exit gpu_unlock_exit(void)
 module_init(gpu_unlock_init);
 module_exit(gpu_unlock_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("RTX 3090 pre-driver BF16 unlock");
+MODULE_DESCRIPTION("RTX 3090/3090 Ti pre-driver BF16 unlock");
 MODULE_VERSION("1.0.0");

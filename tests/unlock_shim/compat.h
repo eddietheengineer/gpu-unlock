@@ -29,6 +29,7 @@ void test_device_log(const char *, ...) __attribute__((format(printf, 1, 2)));
 #define dev_err(dev, ...) test_device_log(__VA_ARGS__)
 #define dev_info(dev, ...) test_device_log(__VA_ARGS__)
 #define PCI_D0 0
+#define PCI_VENDOR_ID_NVIDIA 0x10de
 #define PCI_DEV_FLAGS_NO_FLR_RESET (1u << 10)
 #define PCI_VENDOR_ID 0
 #define PCI_COMMAND 4
@@ -49,7 +50,7 @@ static inline bool list_empty(const struct list_head *h) { return !h->count; }
 struct device { u64 *dma_mask; u64 coherent_dma_mask; struct list_head devres_head; int devres_lock; };
 void *devres_open_group(struct device *,void *,int);
 int devres_release_group(struct device *,void *);
-struct pci_dev { struct device dev; int current_state, pm_cap, refs; unsigned int dev_flags; };
+struct pci_dev { struct device dev; int current_state, pm_cap, refs; unsigned int dev_flags; u16 vendor, device; };
 struct firmware { size_t size; const u8 *data; };
 void usleep_range(unsigned long, unsigned long);
 ktime_t ktime_get(void);

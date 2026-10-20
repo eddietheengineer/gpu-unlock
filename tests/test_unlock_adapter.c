@@ -9,6 +9,7 @@ static u32 regs[0x900000/4];
 static const char *asset_root;
 static struct unlock_transaction_work *last_work;
 static bool full_active;
+static u16 device_id = 0x2204;
 static void check_published_image(void);
 static void check_restored_signature(void);
 static struct {
@@ -26,6 +27,7 @@ static struct {
     int post_gfw,post_gfw_reads,gsp_post_reset_writes;
     int fwsec_wpr;u32 fwsec_wpr_lo,fwsec_wpr_hi; /* WPR2 that FWSEC-FRTS enables */
     int apertures,regions;
+    u32 identity_override;
     char log[32768];
 } fake;
 void *kzalloc(size_t n,int flags) {
@@ -45,7 +47,7 @@ static u8 fw_image[4097];
 static struct firmware fw={sizeof(fw_image),fw_image};
 static void setup(struct unlock_transaction_work *w) {
     memset(&fake,0,sizeof(fake)); memset(regs,0,sizeof(regs)); memset(w,0,sizeof(*w));
-    mask=0xffffffffffffull; dev=(struct pci_dev){.dev={.dma_mask=&mask,.coherent_dma_mask=0xfffffffffull},.refs=1};
+    mask=0xffffffffffffull; dev=(struct pci_dev){.dev={.dma_mask=&mask,.coherent_dma_mask=0xfffffffffull},.refs=1,.vendor=PCI_VENDOR_ID_NVIDIA,.device=device_id};
     w->pdev=&dev; w->bar=regs; w->bar_len=sizeof(regs); w->mapped=true;
     fake.cmd=2;fake.saved=2;regs[(SEC2_BASE+0xf4)/4]=1u<<31;regs[(0x110000+0xf4)/4]=1u<<31;
     regs[(SEC2_BASE+0x118)/4]=2;regs[(0x110000+0x118)/4]=2;
@@ -163,7 +165,8 @@ void release_firmware(const struct firmware *f) {if(f){free((void *)f->data);fre
 void __module_get(void *p) {fake.pins++;}
 int pci_read_config_word(struct pci_dev *p,int r,u16 *v) {*v=r==PCI_COMMAND?fake.cmd:r==PCI_VENDOR_ID?0x10de:0;return 0;}
 int pci_read_config_dword(struct pci_dev *p,int r,u32 *v) {
-    *v=r==PCI_VENDOR_ID?(fake.flrs && fake.lost_identity?~0u:0x220410de):(u32)fake.bar_bad;return 0;
+    *v=r==PCI_VENDOR_ID?(fake.flrs && fake.lost_identity?~0u:
+        fake.identity_override?fake.identity_override:((u32)p->device<<16 | p->vendor)):(u32)fake.bar_bad;return 0;
 }
 int pci_write_config_word(struct pci_dev *p,int r,u16 v) {assert(r==PCI_COMMAND);fake.cmd=v;return 0;}
 int pcie_capability_read_word(struct pci_dev *p,int r,u16 *v) {*v=r==PCI_EXP_DEVSTA?fake.pending:0;return 0;}
@@ -276,6 +279,13 @@ static void load_rom(const char *path) {
 }
 int main(int argc, char **argv) {
     struct unlock_transaction_work w;
+    /* Exercise both models with the same binary. */
+    if(argc>1 && !strncmp(argv[1],"--device=",9)) {
+        char *end;
+        unsigned long selected=strtoul(argv[1]+9,&end,0);
+        assert(!*end && (selected==0x2204 || selected==0x2203));
+        device_id=(u16)selected;argc--;argv++;
+    }
     setup(&w);
     regs[0x110118/4]=0x1230;
     assert(poll_us(&w,0x110118,2,2,100,true)==-ETIMEDOUT);
@@ -496,7 +506,11 @@ int main(int argc, char **argv) {
         assert(fake.starts==1);
         if(mode==0)assert(!ret);
         if(mode==1)assert(ret==-ETIMEDOUT && fake.now<=5000100);
-        if(mode==1)assert(strstr(fake.log,"early PLM failed: pci=0x220410de"));
+        if(mode==1) {
+            char expected[96];
+            snprintf(expected,sizeof(expected),"early PLM failed: pci=%#x",((u32)device_id<<16)|PCI_VENDOR_ID_NVIDIA);
+            assert(strstr(fake.log,expected));
+        }
         if(mode==2)assert(ret==-ENODEV);
         if(mode==3)assert(ret==-EIO);
     }
@@ -527,6 +541,11 @@ int main(int argc, char **argv) {
             assert(!unlock_transaction_unwind(&w) && fake.live==0);
         }
     }
+    /* A different supported model still fails the exact PCI identity check. */
+    setup(&w);
+    fake.identity_override=((device_id==0x2204?0x2203u:0x2204u)<<16)|PCI_VENDOR_ID_NVIDIA;
+    assert(wait_post_flr_gfw(&w)==-ENODEV && !fake.writes);
+
     /* Entire production transaction with pinned assets and a board ROM (a real
      * dump, or "-" for the synthetic fixture). Only PCI/MMIO/DMA are mocked;
      * parsers, patching and ordering are real. */
